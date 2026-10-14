@@ -42,10 +42,10 @@ use super::{video_source::FfiVideoSource, FfiHandle, FfiServer};
 use crate::conversion::capture::gstreamer_config_from_proto;
 #[cfg(feature = "capture-pattern")]
 use crate::conversion::capture::pattern_config_from_proto;
-#[cfg(feature = "capture-device")]
-use crate::conversion::capture::{device_config_from_proto, device_info_to_proto};
 #[cfg(feature = "capture-rtsp")]
 use crate::conversion::capture::rtsp_config_from_proto;
+#[cfg(feature = "capture-device")]
+use crate::conversion::capture::{device_config_from_proto, device_info_to_proto};
 use crate::{conversion::capture::video_codec_to_proto, proto, FfiError, FfiHandleId, FfiResult};
 
 /// A capture pump of either kind, boxed at the FFI edge.
