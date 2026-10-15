@@ -1,0 +1,113 @@
+name: Echoed — stereo Node bindings (linux-x64-gnu)
+
+# Builds @livekit/rtc-ffi-bindings-linux-x64-gnu from this branch (upstream
+# livekit-ffi/v0.12.73 + stereo publishing, rust-sdks#1018) and attaches the
+# npm package to a GitHub release, for the Echoed Panda bot to install
+# through an npm override until the fix ships upstream.
+#
+# The build step is upstream's node-builds.yml "Build (Linux)" step, unchanged:
+# same manylinux_2_28 image, toolchain and `pnpm build`.
+
+permissions:
+  contents: write
+
+# On a push to this branch (workflow_dispatch needs the file on the default
+# branch, which stays upstream's). Each run publishes its own release.
+on:
+  push:
+    branches: ["echoed/stereo-v0.12.73"]
+
+env:
+  CARGO_TERM_COLOR: always
+  APP_NAME: rtc-node
+  TARGET: x86_64-unknown-linux-gnu
+  BUILD_IMAGE: sameli/manylinux_2_28_x86_64_cuda_12.3
+  RELEASE_TAG: echoed-stereo-v0.12.73-${{ github.run_number }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      RUST_BACKTRACE: full
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          submodules: recursive
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "25.1"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (Linux)
+        run: |
+          PROTOC_PATH=$(which protoc)
+          HOST_UID=$(id -u)
+          HOST_GID=$(id -g)
+          docker run --rm \
+            -e HOST_UID=$HOST_UID \
+            -e HOST_GID=$HOST_GID \
+            -e TARGET=${{ env.TARGET }} \
+            -v $PWD:/workspace \
+            -v $PROTOC_PATH:/tmp/protoc:ro \
+            -w /workspace \
+            ${{ env.BUILD_IMAGE }} \
+            bash -lc '
+              set -euo pipefail
+
+              uname -a
+              cp /tmp/protoc /usr/local/bin/protoc
+              chmod +x /usr/local/bin/protoc
+
+              yum install -y openssl-devel libX11-devel mesa-libGL-devel libXext-devel libva-devel libdrm-devel clang clang-devel lld
+              yum install -y gcc-toolset-12-gcc gcc-toolset-12-gcc-c++ gcc-toolset-12-libstdc++-devel libstdc++-devel
+              source /opt/rh/gcc-toolset-12/enable
+              curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+              yum install -y nodejs --setopt=nodesource-nodejs.module_hotfixes=1
+              npm install --global pnpm
+
+              groupadd -g "$HOST_GID" hostgroup 2>/dev/null || true
+              useradd -m -u "$HOST_UID" -g "$HOST_GID" hostuser 2>/dev/null || true
+
+              su - hostuser -c "
+                set -euo pipefail
+                export RUST_BACKTRACE=full
+                curl --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                export PATH=\$HOME/.cargo/bin:\$PATH
+                source /opt/rh/gcc-toolset-12/enable
+                export CC=clang
+                export CXX=clang++
+                TOOLCHAIN_ROOT=/opt/rh/gcc-toolset-12/root/usr
+                export CFLAGS=\"--gcc-toolchain=\$TOOLCHAIN_ROOT\"
+                export CXXFLAGS=\"--gcc-toolchain=\$TOOLCHAIN_ROOT\"
+                cd /workspace
+                cd livekit-ffi-node-bindings
+                CI=true pnpm install
+                pnpm build --target $TARGET
+              "
+            '
+
+      - name: Package the npm tarball
+        id: pack
+        run: |
+          set -euo pipefail
+          PKG=livekit-ffi-node-bindings/npm/linux-x64-gnu
+          cp livekit-ffi-node-bindings/${APP_NAME}.linux-x64-gnu.node "$PKG/"
+          ls -la "$PKG"
+          cd "$PKG"
+          TARBALL=$(npm pack --silent)
+          echo "tarball=$PKG/$TARBALL" >> "$GITHUB_OUTPUT"
+          sha256sum "$TARBALL" "${APP_NAME}.linux-x64-gnu.node"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Echoed: stereo Node bindings $RELEASE_TAG" \
+            --notes "@livekit/rtc-ffi-bindings-linux-x64-gnu built from livekit-ffi/v0.12.73 + stereo publishing (livekit/rust-sdks#1018): a two-channel AudioSource is published with TF_STEREO (and TF_NO_DTX when DTX is off). Built by .github/workflows/echoed-node-linux.yml at ${{ github.sha }}." \
+            "${{ steps.pack.outputs.tarball }}" \
+            "livekit-ffi-node-bindings/${APP_NAME}.linux-x64-gnu.node"
