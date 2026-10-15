@@ -399,6 +399,28 @@ impl LocalParticipant {
             req.audio_features.push(proto::AudioTrackFeature::TfPreconnectBuffer as i32);
         }
 
+        if let LocalTrack::Audio(audio_track) = &track {
+            // A two-channel source is published as stereo. Without TF_STEREO
+            // the server negotiates mono Opus, so a stereo source reaches
+            // subscribers downmixed to identical L/R channels (and the encoder
+            // runs in its speech-tuned mode). Mirrors the JS SDK, which sets
+            // both the `stereo` field and TF_STEREO for a stereo track.
+            if audio_track.rtc_source().num_channels() == 2 {
+                // `stereo` is deprecated in favour of audio_features, but
+                // older servers still read it (as with `disable_dtx` above).
+                #[allow(deprecated)]
+                {
+                    req.stereo = true;
+                }
+                req.audio_features.push(proto::AudioTrackFeature::TfStereo as i32);
+            }
+            // The JS SDK also reports DTX off as an audio feature, not only
+            // through `disable_dtx`.
+            if !options.dtx {
+                req.audio_features.push(proto::AudioTrackFeature::TfNoDtx as i32);
+            }
+        }
+
         req.packet_trailer_features =
             options.frame_metadata_features.to_proto().into_iter().map(|f| f as i32).collect();
 
